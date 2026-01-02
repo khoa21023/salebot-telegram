@@ -36,6 +36,10 @@ const bot = new Telegraf(CONFIG.BOT_TOKEN);
 const app = express();
 app.use(bodyParser.json());
 
+app.get('/', (req, res) => {
+    res.send('✅ Bot đang chạy ngon lành cành đào!');
+});
+
 // Khởi tạo PayOS
 const payos = new PayOS(
     CONFIG.PAYOS_CLIENT_ID, 
