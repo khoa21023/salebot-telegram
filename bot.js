@@ -79,6 +79,36 @@ const stockMutex = new Mutex();
 // ================= 3. LOGIC SHEET (CORE) =================
 // (Giữ nguyên logic cũ)
 
+// [MỚI] Hàm tạo mã đơn tự tăng (ord_bot_001, ord_bot_002...)
+async function generateNextCustomID() {
+    try {
+        const sheet = doc.sheetsByTitle['LichSu'];
+        const rows = await sheet.getRows();
+        
+        let maxId = 0;
+        // Quét cột ma_don để tìm số lớn nhất hiện tại
+        rows.forEach(row => {
+            const code = row.get('ma_don');
+            // Chỉ lấy các mã có dạng ord_bot_...
+            if (code && code.startsWith('ord_bot_')) {
+                // Tách số ra (Ví dụ: ord_bot_005 -> lấy số 5)
+                const num = parseInt(code.replace('ord_bot_', ''));
+                if (!isNaN(num) && num > maxId) {
+                    maxId = num;
+                }
+            }
+        });
+
+        // Tăng thêm 1 và thêm số 0 vào trước (Padding)
+        const nextId = maxId + 1;
+        // .padStart(3, '0') nghĩa là đảm bảo luôn có 3 chữ số (001, 010, 100)
+        return `ord_bot_${String(nextId).padStart(3, '0')}`;
+    } catch (e) {
+        console.error("Lỗi tạo ID mới:", e);
+        return `ord_bot_ERROR_${Date.now()}`; // Fallback nếu lỗi
+    }
+}
+
 async function fetchProducts() {
     try {
         await doc.loadInfo();
@@ -172,9 +202,14 @@ async function finalizeStock(orderId) {
     }
 }
 
-// [CẬP NHẬT] Hàm ghi lịch sử có thêm Mã Đơn
-async function logHistory(user, pName, accounts, orderCode) {
+// [CẬP NHẬT] Hàm ghi lịch sử lưu mã ord_bot_xxx
+async function logHistory(user, pName, accounts) { // Bỏ tham số orderCode cũ đi
+    await stockMutex.lock(); // Khóa lại để tránh 2 người cùng ra số 001
     try {
+        // 1. Tạo mã mới
+        const newCode = await generateNextCustomID();
+
+        // 2. Lưu vào Sheet
         const sheet = doc.sheetsByTitle['LichSu'];
         const rows = accounts.map(acc => ({
             thoi_gian: new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
@@ -182,11 +217,16 @@ async function logHistory(user, pName, accounts, orderCode) {
             username: user.username, 
             san_pham: pName, 
             tai_khoan_da_cap: acc,
-            ma_don: orderCode // <--- LƯU MÃ ĐƠN VÀO ĐÂY
+            ma_don: newCode // <--- Lưu mã ord_bot_...
         }));
         await sheet.addRows(rows);
+        
+        stockMutex.unlock();
+        return newCode; // Trả về mã mới để gửi cho khách xem
     } catch (e) {
         console.error("Lỗi ghi lịch sử:", e);
+        stockMutex.unlock();
+        return "Lỗi_Mã";
     }
 }
 // ================= 4. LOGIC XỬ LÝ MUA (DÙNG CHUNG) =================
@@ -638,12 +678,12 @@ app.post('/webhook', async (req, res) => {
 
                     if (result.success) {
                         const accStr = result.accounts.map((a, i) => `${i+1}. ${a}`).join('\n');
-                        
-                        logHistory({ id: order.userId, username: order.username }, order.pName, result.accounts, orderCode);
+                    
+                        const finalCode = await logHistory({ id: order.userId, username: order.username }, order.pName, result.accounts);
 
                         await bot.telegram.sendMessage(order.userId, 
                             `✅ <b>THANH TOÁN THÀNH CÔNG!</b>\n` +
-                            `Mã đơn: ${orderCode}\n` +
+                            `Mã đơn: <b>${finalCode}</b>\n` + // <--- Hiện mã ord_bot_xxx
                             `Đã nhận: ${amount.toLocaleString()}đ\n\n` +
                             `📦 <b>Tài khoản của bạn:</b>\n<pre>${accStr}</pre>`, 
                             { 
@@ -652,8 +692,9 @@ app.post('/webhook', async (req, res) => {
                             }
                         );
                         
+                        // Báo Admin cũng dùng mã mới cho dễ đối soát
                         CONFIG.ADMIN_ID.forEach(id => {
-                            bot.telegram.sendMessage(id, `🤖 PayOS: Đơn ${orderCode} OK.`);
+                            bot.telegram.sendMessage(id, `🤖 Đơn mới: ${finalCode} (PayOS ID: ${orderCode}) OK.`).catch(()=>{});
                         });
                         pendingOrders.delete(orderCode);
                         console.log("🎉 Đã trả hàng xong!");
