@@ -179,6 +179,30 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode) {
     }
 }
 
+// get customer phone number
+async function updatePhoneHistory(orderId, phoneNumber) {
+    try {
+        await doc.loadInfo();
+        const sheet = doc.sheetsByTitle['History'];
+        const rows = await sheet.getRows();
+        
+        // Tìm tất cả các dòng có mã đơn hàng này (vì 1 đơn có thể mua nhiều acc)
+        const orderRows = rows.filter(row => row.get('order_id') === orderId);
+        
+        if (orderRows.length === 0) return false;
+
+        for (const row of orderRows) {
+            // 'phone' là tên cột bạn vừa tạo ở Bước 1
+            row.assign({ phone: phoneNumber }); 
+            await row.save();
+        }
+        return true;
+    } catch (e) {
+        console.error("Lỗi update SĐT:", e);
+        return false;
+    }
+}
+
 // ================= 4. MUA HÀNG =================
 
 async function handleBuyRequest(ctx, pid, qty) {
@@ -305,14 +329,75 @@ bot.action(/ask_qty_(.+)/, async (ctx) => {
     await ctx.answerCbQuery();
 });
 
+bot.action('skip_save_phone', async (ctx) => {
+    const userId = ctx.from.id;
+    if (userInputState.has(userId)) {
+        userInputState.delete(userId); // Xóa trạng thái chờ
+        await ctx.editMessageText('✅ Đã bỏ qua bước lưu số điện thoại. Bạn có thể tiếp tục mua sắm!');
+    } else {
+        await ctx.answerCbQuery('Bạn không ở trạng thái chờ nhập SĐT.');
+    }
+});
+
+// ================= XỬ LÝ NHẬP LIỆU (SỐ LƯỢNG MUA HOẶC SỐ ĐIỆN THOẠI) =================
+// ================= XỬ LÝ TIN NHẮN VĂN BẢN (TEXT) =================
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
+    const text = ctx.message.text.trim();
+
+    // Nếu user không có trong danh sách đợi (không đang mua, không đang chờ nhập SĐT) thì bỏ qua
     if (!userInputState.has(userId)) return;
+    
     const state = userInputState.get(userId);
-    const qty = parseInt(ctx.message.text);
-    if (isNaN(qty) || qty <= 0) return ctx.reply('❌ Số lượng sai');
-    userInputState.delete(userId);
-    await handleBuyRequest(ctx, state.pid, qty);
+
+    // --- TRƯỜNG HỢP 1: ĐANG CHỜ NHẬP SỐ ĐIỆN THOẠI (BẢO HÀNH) ---
+    if (state.action === 'wf_phone') {
+        
+        // 1. Cho phép thoát bằng lệnh hoặc từ khóa
+        // Nếu user gõ lệnh bất kỳ (bắt đầu bằng /) hoặc gõ "hủy", "bỏ qua"
+        if (text.startsWith('/') || ['hủy', 'huy', 'bỏ qua', 'bo qua', 'skip'].includes(text.toLowerCase())) {
+            if (state.timer) clearTimeout(state.timer); // Hủy cái hẹn giờ 10 phút
+            userInputState.delete(userId);
+            return ctx.reply('✅ Đã bỏ qua bước lưu số điện thoại. Bạn có thể sử dụng các tính năng khác bình thường.');
+        }
+
+        // 2. Kiểm tra định dạng số điện thoại (VN)
+        if (!/^(0|\+84)\d{9,10}$/.test(text)) {
+            return ctx.reply('⚠️ Số điện thoại không hợp lệ.\n👉 Vui lòng nhập lại (VD: 0912345678) hoặc gõ <b>"hủy"</b> để bỏ qua.', { parse_mode: 'HTML' });
+        }
+
+        // 3. Tiến hành lưu vào Google Sheet
+        const msg = await ctx.reply('⏳ Đang lưu thông tin...');
+        
+        // Gọi hàm updatePhoneHistory (bạn nhớ phải thêm hàm này vào file rồi nhé)
+        const success = await updatePhoneHistory(state.orderId, text);
+        
+        if (success) {
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, 
+                `✅ <b>Đã lưu số điện thoại: ${text}</b>\nCảm ơn bạn! Bảo hành cho đơn hàng đã được kích hoạt.`,
+                { parse_mode: 'HTML' }
+            );
+            
+            // [QUAN TRỌNG] Hủy hẹn giờ timeout vì họ đã nhập xong rồi
+            if (state.timer) clearTimeout(state.timer); 
+
+            // Xóa trạng thái để user chat bình thường
+            userInputState.delete(userId);
+        } else {
+            ctx.reply('❌ Có lỗi khi lưu dữ liệu. Vui lòng thử lại sau hoặc liên hệ Admin.');
+        }
+        return; // Kết thúc xử lý tại đây
+    }
+
+    // --- TRƯỜNG HỢP 2: ĐANG CHỜ NHẬP SỐ LƯỢNG MUA HÀNG (LOGIC CŨ) ---
+    // Kiểm tra nếu state có chứa pid (tức là đang mua sản phẩm)
+    if (state.pid) {
+        const qty = parseInt(text);
+        if (isNaN(qty) || qty <= 0) return ctx.reply('❌ Số lượng không hợp lệ. Vui lòng nhập số lớn hơn 0.');
+        
+        userInputState.delete(userId); // Xóa trạng thái mua hàng
+        await handleBuyRequest(ctx, state.pid, qty);
+    }
 });
 
 bot.action(/cancel_(.+)/, async (ctx) => {
@@ -389,23 +474,61 @@ app.post('/webhook', async (req, res) => {
                     orderCode // <--- Mã số PayOS
                 );
 
+                // --- BẮT ĐẦU ĐOẠN CODE THAY THẾ ---
                 if (result.success) {
                     const accStr = result.accounts.map((a, i) => `${i+1}. ${a}`).join('\n');
                     
+                    // 1. Gửi thông tin tài khoản (Acc) cho khách
                     await bot.telegram.sendMessage(order.userId, 
-                        `✅ <b>THÀNH CÔNG!</b>\nMã đơn: <b>${result.finalOrderId}</b>\n📦 <b>Tài khoản:</b>\n<pre>${accStr}</pre>`, 
-                        { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🛍️ Mua tiếp', 'refresh')]]) }
+                        `✅ <b>THANH TOÁN THÀNH CÔNG!</b>\nMã đơn: <b>${result.finalOrderId}</b>\n📦 <b>Tài khoản của bạn:</b>\n<pre>${accStr}</pre>`, 
+                        { parse_mode: 'HTML' }
+                    );
+
+                    // 2. Gửi yêu cầu nhập SĐT + Nút "Bỏ qua"
+                    await bot.telegram.sendMessage(order.userId, 
+                        `🛡 <b>KÍCH HOẠT BẢO HÀNH</b>\n\n` +
+                        `Vui lòng nhập <b>SỐ ĐIỆN THOẠI</b> để hệ thống lưu bảo hành.\n` +
+                        `Hoặc bấm nút bên dưới nếu bạn không muốn lưu.`,
+                        { 
+                            parse_mode: 'HTML',
+                            ...Markup.inlineKeyboard([
+                                [Markup.button.callback('❌ Bỏ qua (Không lưu)', 'skip_save_phone')]
+                            ])
+                        }
                     );
                     
+                    // 3. Tạo bộ đếm: Sau 10 phút nếu không nhập thì tự hủy trạng thái chờ
+                    const timeoutJob = setTimeout(async () => {
+                        // Kiểm tra xem sau 10p user có còn đang ở trạng thái chờ không
+                        if (userInputState.has(order.userId)) {
+                            const currentState = userInputState.get(order.userId);
+                            if (currentState.action === 'wf_phone') {
+                                userInputState.delete(order.userId);
+                                try {
+                                    await bot.telegram.sendMessage(order.userId, 
+                                        '⏳ Đã hết thời gian chờ nhập SĐT bảo hành. Bạn có thể liên hệ Admin nếu cần bổ sung sau.'
+                                    );
+                                } catch (e) {}
+                            }
+                        }
+                    }, 10 * 60 * 1000); // 10 phút
+
+                    // 4. Lưu trạng thái chờ nhập SĐT + kèm theo cái hẹn giờ (timer)
+                    userInputState.set(order.userId, { 
+                        action: 'wf_phone', 
+                        orderId: result.finalOrderId,
+                        timer: timeoutJob 
+                    });
+                    
+                    // 5. Báo Admin có đơn mới
                     CONFIG.ADMIN_ID.forEach(id => {
                         bot.telegram.sendMessage(id, `💰 Đơn mới: ${result.finalOrderId} (${order.total.toLocaleString()}đ)`).catch(()=>{});
                     });
                     
+                    // 6. Xóa đơn hàng khỏi danh sách chờ thanh toán
                     pendingOrders.delete(orderCode);
-                } else {
-                    console.error("Lỗi kho:", result.reason);
-                    bot.telegram.sendMessage(CONFIG.ADMIN_ID[0], `⚠️ Lỗi đơn ${orderCode}: ${result.reason}`);
                 }
+                // --- KẾT THÚC ĐOẠN CODE THAY THẾ ---
             }
         }
         res.json({ success: true });
