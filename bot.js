@@ -128,8 +128,8 @@ async function releaseStock(tempOrderId) {
     } catch (e) {} finally { stockMutex.unlock(); }
 }
 
-// [QUAN TRỌNG] HÀM CHỐT ĐƠN MỚI
-async function finalizeStock(tempOrderId, userInfo, pName, payOSCode) {
+// [QUAN TRỌNG] HÀM CHỐT ĐƠN MỚI (Đã thêm cập nhật price)
+async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPrice) { // <--- [MỚI] Thêm tham số productPrice
     await stockMutex.lock();
     try {
         await doc.loadInfo();
@@ -153,7 +153,7 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode) {
             // Update cả status và order_id
             row.assign({ 
                 status: 'sold',
-                order_id: finalOrderId // <--- Ghi mã đơn vào Stock
+                order_id: finalOrderId 
             }); 
             await row.save();
         }
@@ -166,7 +166,8 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode) {
             username: userInfo.username, 
             product_name: pName, 
             account: acc,
-            order_id: finalOrderId // <--- Ghi mã đơn vào History
+            order_id: finalOrderId,
+            price: productPrice // <--- [MỚI] Ghi giá tiền vào cột price
         }));
         await sheetHistory.addRows(historyRows);
 
@@ -471,7 +472,8 @@ app.post('/webhook', async (req, res) => {
                     order.tempOrderId, 
                     { id: order.userId, username: order.username }, 
                     order.pName,
-                    orderCode // <--- Mã số PayOS
+                    orderCode,
+                    order.price
                 );
 
                 // --- BẮT ĐẦU ĐOẠN CODE THAY THẾ ---
