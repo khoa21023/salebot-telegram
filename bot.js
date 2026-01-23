@@ -10,6 +10,7 @@ const { JWT } = require('google-auth-library');
 const express = require('express');
 const bodyParser = require('body-parser');
 const PayOS = require('@payos/node');
+const { authenticator } = require('otplib'); // <--- Thêm dòng này
 
 // ================= 1. CẤU HÌNH =================
 const CONFIG = {
@@ -303,7 +304,18 @@ async function showMainMenu(ctx) {
     }
 }
 
-bot.start(showMainMenu);
+bot.start(async (ctx) => {
+    // Hiện nút bấm "cứng" (Reply Keyboard)
+    await ctx.reply('👋 Chào mừng bạn quay lại!', 
+        Markup.keyboard([
+            ['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA'] // <--- Thêm nút 2FA vào đây
+        ])
+        .resize()
+    );
+    
+    // Hiện menu mua hàng (nếu muốn) hoặc chỉ hiện lời chào
+    // await showMainMenu(ctx); (Tùy bạn có muốn hiện luôn menu mua hàng không)
+});
 bot.action('refresh', showMainMenu);
 bot.action('out_of_stock', (ctx) => ctx.answerCbQuery('❌ Hết hàng!', { show_alert: true }));
 
@@ -348,7 +360,17 @@ bot.action('skip_save_phone', async (ctx) => {
     const userId = ctx.from.id;
     if (userInputState.has(userId)) {
         userInputState.delete(userId); // Xóa trạng thái chờ
-        await ctx.editMessageText('✅ Đã bỏ qua bước lưu số điện thoại. Bạn có thể tiếp tục mua sắm!');
+        
+        // [CẬP NHẬT] Thêm nút "Tiếp tục mua hàng" (callback là 'refresh' để gọi lại menu)
+        await ctx.editMessageText(
+            '✅ Đã bỏ qua bước lưu số điện thoại. Bạn có thể tiếp tục mua sắm!',
+            {
+                parse_mode: 'HTML',
+                ...Markup.inlineKeyboard([
+                    [Markup.button.callback('🛍️ Tiếp tục mua hàng', 'refresh')]
+                ])
+            }
+        );
     } else {
         await ctx.answerCbQuery('Bạn không ở trạng thái chờ nhập SĐT.');
     }
@@ -356,6 +378,28 @@ bot.action('skip_save_phone', async (ctx) => {
 
 // ================= XỬ LÝ NHẬP LIỆU (SỐ LƯỢNG MUA HOẶC SỐ ĐIỆN THOẠI) =================
 // ================= XỬ LÝ TIN NHẮN VĂN BẢN (TEXT) =================
+// [THÊM MỚI] Bắt sự kiện khi khách bấm nút "Menu Mua Hàng" ở góc dưới
+bot.hears('🛒 Mở Menu Mua Hàng', async (ctx) => {
+    // Xóa các trạng thái nhập liệu cũ (nếu có) để tránh bị kẹt
+    userInputState.delete(ctx.from.id); 
+    
+    // Hiện lại menu
+    await showMainMenu(ctx);
+});
+// --- LOGIC XỬ LÝ NÚT 2FA ---
+bot.hears('🔐 Lấy mã 2FA', async (ctx) => {
+    // 1. Đặt trạng thái chờ nhập Key
+    userInputState.set(ctx.from.id, { action: 'CONVERT_2FA' });
+    
+    // 2. Hướng dẫn người dùng
+    await ctx.reply(
+        '🔐 <b>CHUYỂN ĐỔI MÃ 2FA</b>\n\n' +
+        'Vui lòng gửi <b>Mã bảo mật (Secret Key)</b> của bạn vào đây.\n' +
+        '(Ví dụ: <code>JBSWY3DPEHPK3PXP</code>)\n\n' +
+        '👉 Gõ <b>"hủy"</b> để quay lại.',
+        { parse_mode: 'HTML' }
+    );
+});
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -365,15 +409,54 @@ bot.on('text', async (ctx) => {
     
     const state = userInputState.get(userId);
 
+    // ================= [THÊM MỚI] XỬ LÝ 2FA =================
+    if (state.action === 'CONVERT_2FA') {
+        // Cho phép hủy
+        if (['hủy', 'huy', 'thoát', 'menu'].includes(text.toLowerCase())) {
+            userInputState.delete(userId);
+            return ctx.reply('✅ Đã thoát chế độ 2FA.', Markup.keyboard([['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA']]).resize());
+        }
+
+        try {
+            // 1. Làm sạch key (Xóa khoảng trắng, viết hoa)
+            const secret = text.replace(/\s/g, '').toUpperCase();
+
+            // 2. Tính toán mã 2FA (6 số)
+            const token = authenticator.generate(secret);
+            
+            // 3. Tính thời gian còn lại của mã (Mã đổi mỗi 30s)
+            const timeRemaining = authenticator.timeRemaining();
+
+            // 4. Trả kết quả (Để trong thẻ code để user ấn vào là copy)
+            await ctx.reply(
+                `🔑 Mã 2FA của bạn:\n` +
+                `<code>${token}</code>\n\n` +
+                `⏳ Còn hiệu lực: ${timeRemaining}s\n` +
+                `👇 Gửi key khác hoặc gõ "hủy" để thoát.`,
+                { parse_mode: 'HTML' }
+            );
+        } catch (e) {
+            ctx.reply('❌ Mã Key không hợp lệ! Vui lòng kiểm tra lại.\n(Key thường là chuỗi chữ và số ngẫu nhiên).');
+        }
+        return; // Dừng xử lý tại đây
+    }
+    // ================= KẾT THÚC ĐOẠN 2FA =================
+
     // --- TRƯỜNG HỢP 1: ĐANG CHỜ NHẬP SỐ ĐIỆN THOẠI (BẢO HÀNH) ---
     if (state.action === 'wf_phone') {
         
         // 1. Cho phép thoát bằng lệnh hoặc từ khóa
-        // Nếu user gõ lệnh bất kỳ (bắt đầu bằng /) hoặc gõ "hủy", "bỏ qua"
         if (text.startsWith('/') || ['hủy', 'huy', 'bỏ qua', 'bo qua', 'skip'].includes(text.toLowerCase())) {
-            if (state.timer) clearTimeout(state.timer); // Hủy cái hẹn giờ 10 phút
+            if (state.timer) clearTimeout(state.timer); 
             userInputState.delete(userId);
-            return ctx.reply('✅ Đã bỏ qua bước lưu số điện thoại. Bạn có thể sử dụng các tính năng khác bình thường.');
+            
+            // [CẬP NHẬT] Trả lời kèm nút bấm
+            return ctx.reply(
+                '✅ Đã hủy bước nhập số điện thoại.',
+                Markup.inlineKeyboard([
+                    [Markup.button.callback('🛍️ Tiếp tục mua hàng', 'refresh')]
+                ])
+            );
         }
 
         // 2. Kiểm tra định dạng số điện thoại (VN)
@@ -490,13 +573,24 @@ app.post('/webhook', async (req, res) => {
                     order.price
                 );
 
-                // --- BẮT ĐẦU ĐOẠN CODE THAY THẾ ---
                 if (result.success) {
                     const accStr = result.accounts.map((a, i) => `${i+1}. ${a}`).join('\n');
                     
-                    // 1. Gửi thông tin tài khoản (Acc) cho khách
+                    // [LOGIC MỚI] Kiểm tra xem có 2FA không để tạo tiêu đề
+                    // Nếu dòng acc có nhiều hơn 2 phần tử cách nhau bởi dấu "|" thì tức là có 2FA
+                    // (VD: "User | Pass" -> length là 2. "User | Pass | 2FA" -> length là 3)
+                    const has2FA = result.accounts.length > 0 && result.accounts[0].split('|').length > 2;
+                    
+                    // Tạo dòng tiêu đề tương ứng
+                    const headerTitle = has2FA ? "Username | Password | 2FA" : "Username | Password";
+
+                    // 1. Gửi thông tin tài khoản (Acc) cho khách KÈM TIÊU ĐỀ
                     await bot.telegram.sendMessage(order.userId, 
-                        `✅ <b>THANH TOÁN THÀNH CÔNG!</b>\nMã đơn: <b>${result.finalOrderId}</b>\n📦 <b>Tài khoản của bạn:</b>\n<pre>${accStr}</pre>`, 
+                        `✅ <b>THANH TOÁN THÀNH CÔNG!</b>\n` +
+                        `Mã đơn: <b>${result.finalOrderId}</b>\n` +
+                        `📦 <b>Tài khoản của bạn:</b>\n` +
+                        `<code>${headerTitle}</code>\n` + // <--- Dòng tiêu đề thêm vào ở đây
+                        `<pre>${accStr}</pre>`, 
                         { parse_mode: 'HTML' }
                     );
 
