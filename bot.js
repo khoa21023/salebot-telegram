@@ -10,15 +10,7 @@ const { JWT } = require('google-auth-library');
 const express = require('express');
 const bodyParser = require('body-parser');
 const PayOS = require('@payos/node');
-
-let authenticator;
-try {
-    const otplib = require('otplib');
-    // Tự động tìm authenticator dù nó nằm ở đâu (tránh lỗi undefined)
-    authenticator = otplib.authenticator || (otplib.default && otplib.default.authenticator) || otplib;
-} catch (err) {
-    console.error("❌ Lỗi Import otplib:", err);
-}
+const { authenticator } = require('otplib');
 
 // ================= 1. CẤU HÌNH =================
 const CONFIG = {
@@ -429,13 +421,17 @@ bot.on('text', async (ctx) => {
             // 1. Làm sạch key (Xóa khoảng trắng, viết hoa)
             const secret = text.replace(/\s/g, '').toUpperCase();
 
+            // Kiểm tra nếu key rỗng thì báo lỗi ngay
+            if (!secret) throw new Error("Key rỗng");
+
             // 2. Tính toán mã 2FA (6 số)
             const token = authenticator.generate(secret);
             
-            // 3. Tính thời gian còn lại của mã (Mã đổi mỗi 30s)
-            const timeRemaining = authenticator.timeRemaining();
+            // 3. [FIX LỖI] Tự tính thời gian còn lại (Thay vì gọi hàm thư viện bị lỗi)
+            const seconds = 30;
+            const timeRemaining = seconds - (Math.floor(Date.now() / 1000) % seconds);
 
-            // 4. Trả kết quả (Để trong thẻ code để user ấn vào là copy)
+            // 4. Trả kết quả
             await ctx.reply(
                 `🔑 Mã 2FA của bạn:\n` +
                 `<code>${token}</code>\n\n` +
@@ -444,8 +440,8 @@ bot.on('text', async (ctx) => {
                 { parse_mode: 'HTML' }
             );
         } catch (e) {
-            console.error("LỖI 2FA:", e); // <--- Thêm dòng này để xem lỗi ở cửa sổ dòng lệnh
-            ctx.reply('❌ Mã Key không hợp lệ hoặc lỗi hệ thống! Admin hãy xem log console.');
+            console.error("LỖI 2FA CHI TIẾT:", e); // In lỗi ra log để kiểm tra nếu cần
+            ctx.reply('❌ Mã Key không hợp lệ! Vui lòng kiểm tra lại.\n(Lưu ý: Copy đúng chuỗi Key, không chứa ký tự đặc biệt).');
         }
         return; // Dừng xử lý tại đây
     }
