@@ -10,15 +10,7 @@ const { JWT } = require('google-auth-library');
 const express = require('express');
 const bodyParser = require('body-parser');
 const PayOS = require('@payos/node');
-
-let authenticator;
-try {
-    const otplib = require('otplib');
-    // Tự động tìm authenticator dù nó nằm ở đâu (tránh lỗi undefined)
-    authenticator = otplib.authenticator || (otplib.default && otplib.default.authenticator) || otplib;
-} catch (err) {
-    console.error("❌ Lỗi Import otplib:", err);
-}
+const { authenticator } = require('otplib');
 
 // ================= 1. CẤU HÌNH =================
 const CONFIG = {
