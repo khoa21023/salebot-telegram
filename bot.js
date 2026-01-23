@@ -128,16 +128,16 @@ async function releaseStock(tempOrderId) {
     } catch (e) {} finally { stockMutex.unlock(); }
 }
 
-// [QUAN TRỌNG] HÀM CHỐT ĐƠN MỚI (Đã thêm cập nhật price)
-async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPrice) { // <--- [MỚI] Thêm tham số productPrice
+// [CẬP NHẬT] HÀM CHỐT ĐƠN (Hỗ trợ cột 2fa tùy chọn + Price)
+async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPrice) {
     await stockMutex.lock();
     try {
         await doc.loadInfo();
         
-        // 1. Tạo mã đơn hàng theo định dạng yêu cầu
+        // 1. Tạo mã đơn hàng
         const finalOrderId = `ORD_BOT_${payOSCode}`; 
         
-        // 2. Cập nhật sheet Stock (Ghi thêm order_id)
+        // 2. Cập nhật sheet Stock
         const sheetStock = doc.sheetsByTitle['Stock'];
         const rowsStock = await sheetStock.getRows();
         const rowsToFinalize = rowsStock.filter(row => row.get('status') === `holding_${tempOrderId}`);
@@ -149,8 +149,22 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPri
 
         const accounts = [];
         for (const row of rowsToFinalize) {
-            accounts.push(`${row.get('username')} | ${row.get('password')}`);
-            // Update cả status và order_id
+            // --- LOGIC XỬ LÝ 2FA TÙY CHỌN ---
+            const user = row.get('username');
+            const pass = row.get('password');
+            const twofa = row.get('2fa'); // Lấy giá trị cột 2fa
+
+            let accString = `${user} | ${pass}`;
+            
+            // Kiểm tra: nếu cột 2fa có dữ liệu (không null, không rỗng) thì nối thêm vào
+            if (twofa && String(twofa).trim() !== '') {
+                accString += ` | ${twofa}`;
+            }
+            // ---------------------------------
+
+            accounts.push(accString);
+            
+            // Update trạng thái và mã đơn vào Stock
             row.assign({ 
                 status: 'sold',
                 order_id: finalOrderId 
@@ -165,9 +179,9 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPri
             user_id: userInfo.id, 
             username: userInfo.username, 
             product_name: pName, 
-            account: acc,
+            account: acc, // acc lúc này đã tự động có hoặc không có 2fa tùy theo logic trên
             order_id: finalOrderId,
-            price: productPrice // <--- [MỚI] Ghi giá tiền vào cột price
+            price: productPrice
         }));
         await sheetHistory.addRows(historyRows);
 
