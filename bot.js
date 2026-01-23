@@ -10,7 +10,8 @@ const { JWT } = require('google-auth-library');
 const express = require('express');
 const bodyParser = require('body-parser');
 const PayOS = require('@payos/node');
-const { authenticator } = require('otplib'); // <--- Thêm dòng này
+const otplib = require('otplib');
+const authenticator = otplib.authenticator || otplib.default.authenticator;
 
 // ================= 1. CẤU HÌNH =================
 const CONFIG = {
