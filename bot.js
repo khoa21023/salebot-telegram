@@ -436,7 +436,8 @@ bot.on('text', async (ctx) => {
                 { parse_mode: 'HTML' }
             );
         } catch (e) {
-            ctx.reply('❌ Mã Key không hợp lệ! Vui lòng kiểm tra lại.\n(Key thường là chuỗi chữ và số ngẫu nhiên).');
+            console.error("LỖI 2FA:", e); // <--- Thêm dòng này để xem lỗi ở cửa sổ dòng lệnh
+            ctx.reply('❌ Mã Key không hợp lệ hoặc lỗi hệ thống! Admin hãy xem log console.');
         }
         return; // Dừng xử lý tại đây
     }
