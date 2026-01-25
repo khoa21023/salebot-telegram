@@ -308,7 +308,7 @@ bot.start(async (ctx) => {
     await ctx.reply('👋 Chào mừng bạn quay lại!', 
         Markup.keyboard([
             ['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA'],
-            ['🎥 Xem Hướng Dẫn'] // <--- Thêm nút này vào hàng mới
+            ['🎥 Hướng Dẫn Đăng Nhập ChatGPT Sử Dụng 2FA'] // <--- Thêm nút này vào hàng mới
         ])
         .resize()
     );
@@ -399,12 +399,12 @@ bot.hears('🔐 Lấy mã 2FA', async (ctx) => {
     );
 });
 // --- XỬ LÝ NÚT GỬI VIDEO ---
-bot.hears('🎥 Xem Hướng Dẫn', async (ctx) => {
+bot.hears('🎥 Hướng Dẫn Đăng Nhập ChatGPT Sử Dụng 2FA', async (ctx) => {
     // Thay 'MA_FILE_ID_CUA_BAN' bằng mã bạn vừa lấy ở Bước 1
-    const videoFileId = 'BAACAgUAAxkBAAICMm... (dán mã dài ngoằng vào đây)'; 
+    const videoFileId = 'BAACAgUAAxkBAAICV2l2Vat8NvBFLRVvhm1PkXy0a_ZNAAJaHAACG22wV20JJqYBBadxOAQ'; 
 
     await ctx.replyWithVideo(videoFileId, {
-        caption: '🎬 Đây là video hướng dẫn sử dụng bot nha!', // Chú thích dưới video
+        caption: '🎬 Đây là video hướng dẫn đăng nhập ChatGPT bằng mã 2FA!', // Chú thích dưới video
         parse_mode: 'HTML'
     });
 });
