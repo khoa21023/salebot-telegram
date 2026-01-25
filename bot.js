@@ -305,16 +305,14 @@ async function showMainMenu(ctx) {
 }
 
 bot.start(async (ctx) => {
-    // Hiện nút bấm "cứng" (Reply Keyboard)
     await ctx.reply('👋 Chào mừng bạn quay lại!', 
         Markup.keyboard([
-            ['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA'] // <--- Thêm nút 2FA vào đây
+            ['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA'],
+            ['🎥 Xem Hướng Dẫn'] // <--- Thêm nút này vào hàng mới
         ])
         .resize()
     );
-    
-    // Hiện menu mua hàng (nếu muốn) hoặc chỉ hiện lời chào
-    // await showMainMenu(ctx); (Tùy bạn có muốn hiện luôn menu mua hàng không)
+    // await showMainMenu(ctx); // (Dòng này tùy bạn có muốn hiện menu shop luôn không)
 });
 bot.action('refresh', showMainMenu);
 bot.action('out_of_stock', (ctx) => ctx.answerCbQuery('❌ Hết hàng!', { show_alert: true }));
@@ -399,6 +397,16 @@ bot.hears('🔐 Lấy mã 2FA', async (ctx) => {
         '👉 Gõ <b>"hủy"</b> để quay lại.',
         { parse_mode: 'HTML' }
     );
+});
+// --- XỬ LÝ NÚT GỬI VIDEO ---
+bot.hears('🎥 Xem Hướng Dẫn', async (ctx) => {
+    // Thay 'MA_FILE_ID_CUA_BAN' bằng mã bạn vừa lấy ở Bước 1
+    const videoFileId = 'BAACAgUAAxkBAAICMm... (dán mã dài ngoằng vào đây)'; 
+
+    await ctx.replyWithVideo(videoFileId, {
+        caption: '🎬 Đây là video hướng dẫn sử dụng bot nha!', // Chú thích dưới video
+        parse_mode: 'HTML'
+    });
 });
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
@@ -651,6 +659,12 @@ app.post('/webhook', async (req, res) => {
         console.error(e);
         res.json({ success: false });
     }
+});
+
+// --- Code tạm để lấy ID video (Dùng xong xóa đi cũng được) ---
+bot.on('video', (ctx) => {
+    const fileId = ctx.message.video.file_id;
+    ctx.reply(`Mã File ID của video này là:\n<code>${fileId}</code>`, { parse_mode: 'HTML' });
 });
 
 bot.launch();
