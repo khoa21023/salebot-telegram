@@ -459,6 +459,108 @@ bot.hears('🎥 Hướng Dẫn Đăng Nhập ChatGPT Sử Dụng 2FA', async (ct
         parse_mode: 'HTML'
     });
 });
+
+bot.action(/cancel_(.+)/, async (ctx) => {
+    const code = parseInt(ctx.match[1]);
+    if(pendingOrders.has(code)) {
+        const order = pendingOrders.get(code);
+        clearTimeout(order.timer);
+        await releaseStock(order.tempOrderId);
+        pendingOrders.delete(code);
+        await ctx.editMessageCaption(`❌ Đơn ${code} đã hủy.`);
+        await showMainMenu(ctx);
+    } else {
+        ctx.answerCbQuery('Đơn không tồn tại.');
+        showMainMenu(ctx);
+    }
+});
+
+// ADMIN FIX
+bot.command('fix', async (ctx) => {
+    if (!CONFIG.ADMIN_ID.includes(ctx.from.id)) return ctx.reply('⛔ No Admin');
+    const msg = await ctx.reply('🧹 Scanning...');
+    try {
+        await doc.loadInfo();
+        const sheet = doc.sheetsByTitle['Stock'];
+        const rows = await sheet.getRows();
+        let count = 0;
+        let updates = [];
+        for (const row of rows) {
+            const status = row.get('status');
+            if (status && status.startsWith('holding_')) {
+                const tempId = status.replace('holding_', '');
+                let isActive = false;
+                for (let [key, val] of pendingOrders) {
+                    if (val.tempOrderId === tempId) { isActive = true; break; }
+                }
+                if (!isActive) {
+                    row.assign({ status: 'available' });
+                    updates.push(row.save()); 
+                    count++;
+                }
+            }
+        }
+        if (count > 0) {
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `⏳ Fixing ${count}...`);
+            for (const p of updates) { await p; await new Promise(r => setTimeout(r, 200)); }
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `✅ Released ${count} items!`);
+        } else {
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '👍 Clean.');
+        }
+    } catch (e) {
+        ctx.reply(`❌ Error: ${e.message}`);
+    }
+});
+
+// --- LỆNH KIỂM TRA QUYỀN ADMIN (DEBUG) ---
+bot.command('check_id', (ctx) => {
+    const myId = ctx.from.id;
+    const adminList = CONFIG.ADMIN_ID;
+    
+    // Kiểm tra xem ID của mình có nằm trong danh sách Admin không
+    const isAdmin = adminList.includes(myId);
+
+    ctx.reply(
+        `🕵️ <b>KIỂM TRA QUYỀN ADMIN</b>\n\n` +
+        `🆔 ID của bạn: <code>${myId}</code>\n` +
+        `📋 Danh sách Admin Bot đang nhận: <code>${JSON.stringify(adminList)}</code>\n\n` +
+        `Kết quả: ${isAdmin ? '✅ BẠN LÀ ADMIN' : '❌ BẠN KHÔNG PHẢI ADMIN'}`, 
+        { parse_mode: 'HTML' }
+    );
+});
+
+// --- [THÊM MỚI] LỆNH GỬI THÔNG BÁO CHO TOÀN BỘ KHÁCH HÀNG ---
+// Cách dùng: /gui_tb Nội dung tin nhắn
+bot.command('gui_tb', async (ctx) => {
+    // 1. Chỉ Admin mới được dùng
+    if (!CONFIG.ADMIN_ID.includes(ctx.from.id)) return;
+
+    // 2. Lấy nội dung tin nhắn sau lệnh /gui_tb
+    const content = ctx.message.text.replace('/gui_tb', '').trim();
+    if (!content) return ctx.reply('⚠️ Vui lòng nhập nội dung.\nVí dụ: /gui_tb Hàng mới về anh em ơi!');
+
+    const msg = await ctx.reply(`⏳ Đang gửi tin cho ${cachedUserIds.size} người...`);
+    
+    let countSuccess = 0;
+    let countBlock = 0;
+
+    // 3. Duyệt qua từng người và gửi
+    for (const userId of cachedUserIds) {
+        try {
+            await bot.telegram.sendMessage(userId, `📢 <b>THÔNG BÁO TỪ SHOP</b>\n\n${content}`, { parse_mode: 'HTML' });
+            countSuccess++;
+            
+            // Nghỉ 50ms giữa các tin để tránh bị Telegram chặn spam
+            await new Promise(resolve => setTimeout(resolve, 50)); 
+        } catch (e) {
+            // Nếu khách đã chặn bot (Block) thì bỏ qua
+            countBlock++;
+        }
+    }
+
+    await ctx.reply(`✅ <b>GỬI XONG!</b>\n\n👍 Thành công: ${countSuccess}\n🚫 Bị chặn/Lỗi: ${countBlock}`, { parse_mode: 'HTML' });
+});
+
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -560,107 +662,6 @@ bot.on('text', async (ctx) => {
         userInputState.delete(userId); // Xóa trạng thái mua hàng
         await handleBuyRequest(ctx, state.pid, qty);
     }
-});
-
-bot.action(/cancel_(.+)/, async (ctx) => {
-    const code = parseInt(ctx.match[1]);
-    if(pendingOrders.has(code)) {
-        const order = pendingOrders.get(code);
-        clearTimeout(order.timer);
-        await releaseStock(order.tempOrderId);
-        pendingOrders.delete(code);
-        await ctx.editMessageCaption(`❌ Đơn ${code} đã hủy.`);
-        await showMainMenu(ctx);
-    } else {
-        ctx.answerCbQuery('Đơn không tồn tại.');
-        showMainMenu(ctx);
-    }
-});
-
-// ADMIN FIX
-bot.command('fix', async (ctx) => {
-    if (!CONFIG.ADMIN_ID.includes(ctx.from.id)) return ctx.reply('⛔ No Admin');
-    const msg = await ctx.reply('🧹 Scanning...');
-    try {
-        await doc.loadInfo();
-        const sheet = doc.sheetsByTitle['Stock'];
-        const rows = await sheet.getRows();
-        let count = 0;
-        let updates = [];
-        for (const row of rows) {
-            const status = row.get('status');
-            if (status && status.startsWith('holding_')) {
-                const tempId = status.replace('holding_', '');
-                let isActive = false;
-                for (let [key, val] of pendingOrders) {
-                    if (val.tempOrderId === tempId) { isActive = true; break; }
-                }
-                if (!isActive) {
-                    row.assign({ status: 'available' });
-                    updates.push(row.save()); 
-                    count++;
-                }
-            }
-        }
-        if (count > 0) {
-            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `⏳ Fixing ${count}...`);
-            for (const p of updates) { await p; await new Promise(r => setTimeout(r, 200)); }
-            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `✅ Released ${count} items!`);
-        } else {
-            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '👍 Clean.');
-        }
-    } catch (e) {
-        ctx.reply(`❌ Error: ${e.message}`);
-    }
-});
-
-// --- LỆNH KIỂM TRA QUYỀN ADMIN (DEBUG) ---
-bot.command('check_id', (ctx) => {
-    const myId = ctx.from.id;
-    const adminList = CONFIG.ADMIN_ID;
-    
-    // Kiểm tra xem ID của mình có nằm trong danh sách Admin không
-    const isAdmin = adminList.includes(myId);
-
-    ctx.reply(
-        `🕵️ <b>KIỂM TRA QUYỀN ADMIN</b>\n\n` +
-        `🆔 ID của bạn: <code>${myId}</code>\n` +
-        `📋 Danh sách Admin Bot đang nhận: <code>${JSON.stringify(adminList)}</code>\n\n` +
-        `Kết quả: ${isAdmin ? '✅ BẠN LÀ ADMIN' : '❌ BẠN KHÔNG PHẢI ADMIN'}`, 
-        { parse_mode: 'HTML' }
-    );
-});
-
-// --- [THÊM MỚI] LỆNH GỬI THÔNG BÁO CHO TOÀN BỘ KHÁCH HÀNG ---
-// Cách dùng: /gui_tb Nội dung tin nhắn
-bot.command('gui_tb', async (ctx) => {
-    // 1. Chỉ Admin mới được dùng
-    if (!CONFIG.ADMIN_ID.includes(ctx.from.id)) return;
-
-    // 2. Lấy nội dung tin nhắn sau lệnh /gui_tb
-    const content = ctx.message.text.replace('/gui_tb', '').trim();
-    if (!content) return ctx.reply('⚠️ Vui lòng nhập nội dung.\nVí dụ: /gui_tb Hàng mới về anh em ơi!');
-
-    const msg = await ctx.reply(`⏳ Đang gửi tin cho ${cachedUserIds.size} người...`);
-    
-    let countSuccess = 0;
-    let countBlock = 0;
-
-    // 3. Duyệt qua từng người và gửi
-    for (const userId of cachedUserIds) {
-        try {
-            await bot.telegram.sendMessage(userId, `📢 <b>THÔNG BÁO TỪ SHOP</b>\n\n${content}`, { parse_mode: 'HTML' });
-            countSuccess++;
-            
-            // Nghỉ 50ms giữa các tin để tránh bị Telegram chặn spam
-            await new Promise(resolve => setTimeout(resolve, 50)); 
-        } catch (e) {
-            // Nếu khách đã chặn bot (Block) thì bỏ qua
-            countBlock++;
-        }
-    }
-
-    await ctx.reply(`✅ <b>GỬI XONG!</b>\n\n👍 Thành công: ${countSuccess}\n🚫 Bị chặn/Lỗi: ${countBlock}`, { parse_mode: 'HTML' });
 });
 
 // WEBHOOK
