@@ -60,6 +60,57 @@ const stockMutex = new Mutex();
 
 // ================= 3. LOGIC SHEET =================
 
+// --- [THÊM MỚI] Biến lưu tạm danh sách khách hàng để đỡ phải đọc Sheet liên tục
+let cachedUserIds = new Set();
+
+// Hàm tải danh sách khách cũ khi khởi động Bot
+async function loadUsersCache() {
+    try {
+        await doc.loadInfo();
+        if (!doc.sheetsByTitle['Users']) return; // Nếu chưa tạo sheet Users thì thôi
+        const sheet = doc.sheetsByTitle['Users'];
+        const rows = await sheet.getRows();
+        rows.forEach(row => cachedUserIds.add(row.get('user_id')));
+        console.log(`✅ Đã tải ${cachedUserIds.size} khách hàng cũ.`);
+    } catch (e) {
+        console.log('⚠️ Chưa có sheet Users hoặc lỗi tải cache.');
+    }
+}
+// Gọi hàm này ngay khi bot chạy
+loadUsersCache();
+
+// Middleware: Tự động lưu khách mới mỗi khi họ nhắn bất kỳ cái gì
+bot.use(async (ctx, next) => {
+    if (ctx.from && !cachedUserIds.has(String(ctx.from.id))) {
+        const userId = String(ctx.from.id);
+        const name = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
+        
+        // 1. Lưu vào bộ nhớ tạm
+        cachedUserIds.add(userId);
+
+        // 2. Lưu vào Google Sheet (Chạy ngầm không đợi)
+        (async () => {
+            try {
+                await doc.loadInfo();
+                let sheet = doc.sheetsByTitle['Users'];
+                if (!sheet) {
+                    // Tự tạo sheet nếu quên tạo
+                    sheet = await doc.addSheet({ title: 'Users', headerValues: ['user_id', 'name', 'date'] });
+                }
+                await sheet.addRow({
+                    user_id: userId,
+                    name: name,
+                    date: new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
+                });
+                console.log(`➕ Đã lưu khách mới: ${name}`);
+            } catch (e) {
+                console.error("Lỗi lưu user:", e);
+            }
+        })();
+    }
+    return next(); // Cho phép bot xử lý tiếp các lệnh khác
+});
+
 async function fetchProducts() {
     try {
         await doc.loadInfo();
@@ -561,6 +612,38 @@ bot.command('fix', async (ctx) => {
     } catch (e) {
         ctx.reply(`❌ Error: ${e.message}`);
     }
+});
+
+// --- [THÊM MỚI] LỆNH GỬI THÔNG BÁO CHO TOÀN BỘ KHÁCH HÀNG ---
+// Cách dùng: /gui_tb Nội dung tin nhắn
+bot.command('gui_tb', async (ctx) => {
+    // 1. Chỉ Admin mới được dùng
+    if (!CONFIG.ADMIN_ID.includes(ctx.from.id)) return;
+
+    // 2. Lấy nội dung tin nhắn sau lệnh /gui_tb
+    const content = ctx.message.text.replace('/gui_tb', '').trim();
+    if (!content) return ctx.reply('⚠️ Vui lòng nhập nội dung.\nVí dụ: /gui_tb Hàng mới về anh em ơi!');
+
+    const msg = await ctx.reply(`⏳ Đang gửi tin cho ${cachedUserIds.size} người...`);
+    
+    let countSuccess = 0;
+    let countBlock = 0;
+
+    // 3. Duyệt qua từng người và gửi
+    for (const userId of cachedUserIds) {
+        try {
+            await bot.telegram.sendMessage(userId, `📢 <b>THÔNG BÁO TỪ SHOP</b>\n\n${content}`, { parse_mode: 'HTML' });
+            countSuccess++;
+            
+            // Nghỉ 50ms giữa các tin để tránh bị Telegram chặn spam
+            await new Promise(resolve => setTimeout(resolve, 50)); 
+        } catch (e) {
+            // Nếu khách đã chặn bot (Block) thì bỏ qua
+            countBlock++;
+        }
+    }
+
+    await ctx.reply(`✅ <b>GỬI XONG!</b>\n\n👍 Thành công: ${countSuccess}\n🚫 Bị chặn/Lỗi: ${countBlock}`, { parse_mode: 'HTML' });
 });
 
 // WEBHOOK
