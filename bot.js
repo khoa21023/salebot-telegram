@@ -561,6 +561,12 @@ bot.command('gui_tb', async (ctx) => {
     await ctx.reply(`✅ <b>GỬI XONG!</b>\n\n👍 Thành công: ${countSuccess}\n🚫 Bị chặn/Lỗi: ${countBlock}`, { parse_mode: 'HTML' });
 });
 
+// --- Code tạm để lấy ID video (Dùng xong xóa đi cũng được) ---
+bot.on('video', (ctx) => {
+    const fileId = ctx.message.video.file_id;
+    ctx.reply(`Mã File ID của video này là:\n<code>${fileId}</code>`, { parse_mode: 'HTML' });
+});
+
 bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const text = ctx.message.text.trim();
@@ -569,16 +575,21 @@ bot.on('text', async (ctx) => {
     if (!userInputState.has(userId)) return;
     
     const state = userInputState.get(userId);
-    
+
     // ================= [THÊM MỚI] XỬ LÝ 2FA (UPDATE REALTIME) =================
     if (state.action === 'CONVERT_2FA') {
         // 1. Xử lý lệnh thoát
         if (['hủy', 'huy', 'thoát', 'menu'].includes(text.toLowerCase())) {
-            // Nếu đang có vòng lặp chạy ngầm thì tắt nó đi
-            if (state.interval2FA) clearInterval(state.interval2FA);
-            
+            if (state.interval2FA) clearInterval(state.interval2FA); // Nhớ giữ dòng tắt bộ đếm này nếu có
             userInputState.delete(userId);
-            return ctx.reply('✅ Đã thoát chế độ 2FA.', Markup.keyboard([['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA']]).resize());
+
+            return ctx.reply('✅ Đã thoát chế độ 2FA.', 
+                Markup.keyboard([
+                    ['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA'],
+                    ['🎥 Hướng Dẫn Đăng Nhập ChatGPT Sử Dụng 2FA'] // <--- THÊM DÒNG NÀY VÀO
+                ])
+                .resize()
+            );
         }
 
         try {
@@ -803,12 +814,6 @@ app.post('/webhook', async (req, res) => {
         console.error(e);
         res.json({ success: false });
     }
-});
-
-// --- Code tạm để lấy ID video (Dùng xong xóa đi cũng được) ---
-bot.on('video', (ctx) => {
-    const fileId = ctx.message.video.file_id;
-    ctx.reply(`Mã File ID của video này là:\n<code>${fileId}</code>`, { parse_mode: 'HTML' });
 });
 
 bot.launch();
