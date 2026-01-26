@@ -614,6 +614,23 @@ bot.command('fix', async (ctx) => {
     }
 });
 
+// --- LỆNH KIỂM TRA QUYỀN ADMIN (DEBUG) ---
+bot.command('check_id', (ctx) => {
+    const myId = ctx.from.id;
+    const adminList = CONFIG.ADMIN_ID;
+    
+    // Kiểm tra xem ID của mình có nằm trong danh sách Admin không
+    const isAdmin = adminList.includes(myId);
+
+    ctx.reply(
+        `🕵️ <b>KIỂM TRA QUYỀN ADMIN</b>\n\n` +
+        `🆔 ID của bạn: <code>${myId}</code>\n` +
+        `📋 Danh sách Admin Bot đang nhận: <code>${JSON.stringify(adminList)}</code>\n\n` +
+        `Kết quả: ${isAdmin ? '✅ BẠN LÀ ADMIN' : '❌ BẠN KHÔNG PHẢI ADMIN'}`, 
+        { parse_mode: 'HTML' }
+    );
+});
+
 // --- [THÊM MỚI] LỆNH GỬI THÔNG BÁO CHO TOÀN BỘ KHÁCH HÀNG ---
 // Cách dùng: /gui_tb Nội dung tin nhắn
 bot.command('gui_tb', async (ctx) => {
