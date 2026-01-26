@@ -569,42 +569,85 @@ bot.on('text', async (ctx) => {
     if (!userInputState.has(userId)) return;
     
     const state = userInputState.get(userId);
-
-    // ================= [THÊM MỚI] XỬ LÝ 2FA =================
+    
+    // ================= [THÊM MỚI] XỬ LÝ 2FA (UPDATE REALTIME) =================
     if (state.action === 'CONVERT_2FA') {
-        // Cho phép hủy
+        // 1. Xử lý lệnh thoát
         if (['hủy', 'huy', 'thoát', 'menu'].includes(text.toLowerCase())) {
+            // Nếu đang có vòng lặp chạy ngầm thì tắt nó đi
+            if (state.interval2FA) clearInterval(state.interval2FA);
+            
             userInputState.delete(userId);
             return ctx.reply('✅ Đã thoát chế độ 2FA.', Markup.keyboard([['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA']]).resize());
         }
 
         try {
-            // 1. Làm sạch key (Xóa khoảng trắng, viết hoa)
+            // 2. Làm sạch key và kiểm tra
             const secret = text.replace(/\s/g, '').toUpperCase();
-
-            // Kiểm tra nếu key rỗng thì báo lỗi ngay
             if (!secret) throw new Error("Key rỗng");
-
-            // 2. Tính toán mã 2FA (6 số)
-            const token = authenticator.generate(secret);
             
-            // 3. [FIX LỖI] Tự tính thời gian còn lại (Thay vì gọi hàm thư viện bị lỗi)
-            const seconds = 30;
-            const timeRemaining = seconds - (Math.floor(Date.now() / 1000) % seconds);
+            // Test thử xem key có hợp lệ không trước khi chạy loop
+            authenticator.generate(secret); 
 
-            // 4. Trả kết quả
-            await ctx.reply(
-                `🔑 Mã 2FA của bạn:\n` +
-                `<code>${token}</code>\n\n` +
-                `⏳ Còn hiệu lực: ${timeRemaining}s\n` +
-                `👇 Gửi key khác hoặc gõ "hủy" để thoát.`,
-                { parse_mode: 'HTML' }
-            );
+            // 3. Nếu user gửi key mới, tắt vòng lặp cũ đi (nếu có)
+            if (state.interval2FA) clearInterval(state.interval2FA);
+
+            // 4. Gửi tin nhắn GỐC trước
+            const msg = await ctx.reply('⏳ Đang khởi tạo bộ đếm 2FA...', { parse_mode: 'HTML' });
+            
+            // 5. Hàm cập nhật tin nhắn (Chạy mỗi giây)
+            const updateMessage = async () => {
+                try {
+                    const token = authenticator.generate(secret);
+                    const seconds = 30;
+                    const remaining = seconds - (Math.floor(Date.now() / 1000) % seconds);
+                    
+                    // Tạo thanh loading visual (cho đẹp)
+                    // const bar = '▓'.repeat(remaining) + '░'.repeat(30 - remaining); 
+
+                    const messageContent = 
+                        `🔐 <b>MÃ 2FA LIVE</b>\n` +
+                        `Key: <code>${secret}</code>\n\n` +
+                        `Code: <code>${token}</code>\n` +
+                        `⏳ Đổi sau: <b>${remaining}s</b>\n` + 
+                        `------------------\n` +
+                        `👇 Gửi key khác hoặc gõ "hủy" để dừng.`;
+
+                    // Chỉ sửa tin nhắn nếu nội dung thay đổi (để tiết kiệm API)
+                    await ctx.telegram.editMessageText(
+                        ctx.chat.id, 
+                        msg.message_id, 
+                        null, 
+                        messageContent, 
+                        { parse_mode: 'HTML' }
+                    );
+                } catch (err) {
+                    // Nếu lỗi (ví dụ user xóa chat), tắt luôn vòng lặp
+                    clearInterval(state.interval2FA);
+                }
+            };
+
+            // Chạy ngay lần đầu
+            updateMessage();
+
+            // 6. Cài đặt vòng lặp: Cập nhật mỗi 2 giây (Để tránh bị Telegram chặn vì spam request)
+            // Lưu interval vào state để lát nữa còn tắt được
+            const intervalId = setInterval(updateMessage, 2000);
+            
+            // Cập nhật state với ID của vòng lặp
+            state.secret = secret; // Lưu key
+            state.interval2FA = intervalId; // Lưu ID vòng lặp
+            
+            // Tự động tắt sau 2 phút để tiết kiệm tài nguyên server (tránh chạy vĩnh viễn)
+            setTimeout(() => {
+                clearInterval(intervalId);
+            }, 120000); 
+
         } catch (e) {
-            console.error("LỖI 2FA CHI TIẾT:", e); // In lỗi ra log để kiểm tra nếu cần
-            ctx.reply('❌ Mã Key không hợp lệ! Vui lòng kiểm tra lại.\n(Lưu ý: Copy đúng chuỗi Key, không chứa ký tự đặc biệt).');
+            console.error("Lỗi 2FA:", e);
+            ctx.reply('❌ Mã Key không hợp lệ! Vui lòng kiểm tra lại.');
         }
-        return; // Dừng xử lý tại đây
+        return; 
     }
     // ================= KẾT THÚC ĐOẠN 2FA =================
 
