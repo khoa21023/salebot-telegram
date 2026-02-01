@@ -14,21 +14,21 @@ const { authenticator } = require('otplib');
 
 // ================= 1. CẤU HÌNH =================
 const CONFIG = {
-    BOT_TOKEN: process.env.BOT_TOKEN, 
+    BOT_TOKEN: process.env.BOT_TOKEN,
     SHEET_ID: process.env.SHEET_ID,
     GOOGLE_EMAIL: process.env.GOOGLE_EMAIL,
     GOOGLE_KEY: process.env.GOOGLE_KEY ? process.env.GOOGLE_KEY.replace(/\\n/g, '\n') : '',
-    
-    ADMIN_ID: [ 
-        parseInt(process.env.ADMIN_ID_1), 
-        parseInt(process.env.ADMIN_ID_2) 
+
+    ADMIN_ID: [
+        parseInt(process.env.ADMIN_ID_1),
+        parseInt(process.env.ADMIN_ID_2)
     ].filter(Boolean),
 
     PAYOS_CLIENT_ID: process.env.PAYOS_CLIENT_ID,
     PAYOS_API_KEY: process.env.PAYOS_API_KEY,
     PAYOS_CHECKSUM_KEY: process.env.PAYOS_CHECKSUM_KEY,
-    
-    PORT: process.env.PORT || 3000 
+
+    PORT: process.env.PORT || 3000
 };
 
 // ================= 2. KHỞI TẠO =================
@@ -40,9 +40,9 @@ app.get('/', (req, res) => res.send('✅ Shop Bot Online!'));
 
 const payos = new PayOS(CONFIG.PAYOS_CLIENT_ID, CONFIG.PAYOS_API_KEY, CONFIG.PAYOS_CHECKSUM_KEY);
 
-const pendingOrders = new Map(); 
-const userInputState = new Map(); 
-let cachedProducts = []; 
+const pendingOrders = new Map();
+const userInputState = new Map();
+let cachedProducts = [];
 
 const serviceAccountAuth = new JWT({
     email: CONFIG.GOOGLE_EMAIL,
@@ -56,7 +56,7 @@ class Mutex {
     lock() { return new Promise(resolve => { if (this.locked) { this.queue.push(resolve); } else { this.locked = true; resolve(); } }); }
     unlock() { if (this.queue.length > 0) { const resolve = this.queue.shift(); resolve(); } else { this.locked = false; } }
 }
-const stockMutex = new Mutex(); 
+const stockMutex = new Mutex();
 
 // ================= 3. LOGIC SHEET =================
 
@@ -84,7 +84,7 @@ bot.use(async (ctx, next) => {
     if (ctx.from && !cachedUserIds.has(String(ctx.from.id))) {
         const userId = String(ctx.from.id);
         const name = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
-        
+
         // 1. Lưu vào bộ nhớ tạm
         cachedUserIds.add(userId);
 
@@ -117,8 +117,8 @@ async function fetchProducts() {
         const sheet = doc.sheetsByTitle['Products'];
         const rows = await sheet.getRows();
         cachedProducts = rows.map(row => ({
-            id: row.get('id'), 
-            name: row.get('name'), 
+            id: row.get('id'),
+            name: row.get('name'),
             price: parseInt(row.get('price').replace(/\D/g, ''))
         }));
         return cachedProducts;
@@ -177,7 +177,7 @@ async function releaseStock(tempOrderId) {
             row.assign({ status: 'available' });
             await row.save();
         }
-    } catch (e) {} finally { stockMutex.unlock(); }
+    } catch (e) { } finally { stockMutex.unlock(); }
 }
 
 // [CẬP NHẬT] HÀM CHỐT ĐƠN (Hỗ trợ cột 2fa tùy chọn + Price)
@@ -185,18 +185,18 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPri
     await stockMutex.lock();
     try {
         await doc.loadInfo();
-        
+
         // 1. Tạo mã đơn hàng
-        const finalOrderId = `ORD_BOT_${payOSCode}`; 
-        
+        const finalOrderId = `ORD_BOT_${payOSCode}`;
+
         // 2. Cập nhật sheet Stock
         const sheetStock = doc.sheetsByTitle['Stock'];
         const rowsStock = await sheetStock.getRows();
         const rowsToFinalize = rowsStock.filter(row => row.get('status') === `holding_${tempOrderId}`);
-        
+
         if (rowsToFinalize.length === 0) {
-             stockMutex.unlock();
-             return { success: false, reason: 'Đơn hàng lỗi/hủy' };
+            stockMutex.unlock();
+            return { success: false, reason: 'Đơn hàng lỗi/hủy' };
         }
 
         const accounts = [];
@@ -207,7 +207,7 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPri
             const twofa = row.get('2fa'); // Lấy giá trị cột 2fa
 
             let accString = `${user} | ${pass}`;
-            
+
             // Kiểm tra: nếu cột 2fa có dữ liệu (không null, không rỗng) thì nối thêm vào
             if (twofa && String(twofa).trim() !== '') {
                 accString += ` | ${twofa}`;
@@ -215,12 +215,12 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPri
             // ---------------------------------
 
             accounts.push(accString);
-            
+
             // Update trạng thái và mã đơn vào Stock
-            row.assign({ 
+            row.assign({
                 status: 'sold',
-                order_id: finalOrderId 
-            }); 
+                order_id: finalOrderId
+            });
             await row.save();
         }
 
@@ -228,9 +228,9 @@ async function finalizeStock(tempOrderId, userInfo, pName, payOSCode, productPri
         const sheetHistory = doc.sheetsByTitle['History'];
         const historyRows = accounts.map(acc => ({
             date: new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
-            user_id: userInfo.id, 
-            username: userInfo.username, 
-            product_name: pName, 
+            user_id: userInfo.id,
+            username: userInfo.username,
+            product_name: pName,
             account: acc, // acc lúc này đã tự động có hoặc không có 2fa tùy theo logic trên
             order_id: finalOrderId,
             price: productPrice
@@ -252,15 +252,15 @@ async function updatePhoneHistory(orderId, phoneNumber) {
         await doc.loadInfo();
         const sheet = doc.sheetsByTitle['History'];
         const rows = await sheet.getRows();
-        
+
         // Tìm tất cả các dòng có mã đơn hàng này (vì 1 đơn có thể mua nhiều acc)
         const orderRows = rows.filter(row => row.get('order_id') === orderId);
-        
+
         if (orderRows.length === 0) return false;
 
         for (const row of orderRows) {
             // 'phone' là tên cột bạn vừa tạo ở Bước 1
-            row.assign({ phone: phoneNumber }); 
+            row.assign({ phone: phoneNumber });
             await row.save();
         }
         return true;
@@ -276,14 +276,14 @@ async function handleBuyRequest(ctx, pid, qty) {
     const p = cachedProducts.find(x => x.id === pid);
     if (!p) return ctx.reply('❌ Sản phẩm không hợp lệ.');
 
-    const tempOrderId = String(Date.now()); 
-    const payOSOrderCode = Number(tempOrderId.slice(-9)); 
+    const tempOrderId = String(Date.now());
+    const payOSOrderCode = Number(tempOrderId.slice(-9));
 
     const msg = await ctx.reply(`⏳ Đang tạo link thanh toán...`);
 
     const reserveResult = await reserveStock(pid, qty, tempOrderId);
     if (!reserveResult.success) {
-        ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(()=>{});
+        ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => { });
         return ctx.reply(`⚠️ ${reserveResult.reason}`);
     }
 
@@ -294,14 +294,14 @@ async function handleBuyRequest(ctx, pid, qty) {
             orderCode: payOSOrderCode,
             amount: total,
             description: `Thanh toan ${payOSOrderCode}`,
-            cancelUrl: "https://t.me", 
+            cancelUrl: "https://t.me",
             returnUrl: "https://t.me"
         });
-        
-        pendingOrders.set(payOSOrderCode, { 
+
+        pendingOrders.set(payOSOrderCode, {
             userId: ctx.from.id,
             username: ctx.from.username,
-            pid, pName: p.name, 
+            pid, pName: p.name,
             price: p.price,
             qty, total,
             tempOrderId: tempOrderId,
@@ -311,12 +311,12 @@ async function handleBuyRequest(ctx, pid, qty) {
                     await releaseStock(tempOrderId);
                     bot.telegram.sendMessage(ctx.from.id, `⏳ Đơn ${payOSOrderCode} đã hủy do quá hạn.`);
                 }
-            }, 5 * 60 * 1000) 
+            }, 5 * 60 * 1000)
         });
 
-        ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(()=>{});
+        ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => { });
         await ctx.replyWithPhoto(
-            { url: `https://img.vietqr.io/image/${paymentLinkRes.bin}-${paymentLinkRes.accountNumber}-compact.png?amount=${total}&addInfo=${paymentLinkRes.description}&accountName=${paymentLinkRes.accountName}` }, 
+            { url: `https://img.vietqr.io/image/${paymentLinkRes.bin}-${paymentLinkRes.accountNumber}-compact.png?amount=${total}&addInfo=${paymentLinkRes.description}&accountName=${paymentLinkRes.accountName}` },
             {
                 caption: `🧾 <b>ĐƠN HÀNG: ${payOSOrderCode}</b>\n📦 ${p.name} (x${qty})\n💰 <b>${total.toLocaleString()}đ</b>`,
                 parse_mode: 'HTML',
@@ -339,29 +339,29 @@ async function showMainMenu(ctx) {
     userInputState.delete(ctx.from.id);
     const products = await fetchProducts();
     const stocks = await getStockCounts(products);
-    
+
     const buttons = products.map(p => {
         const stock = stocks ? (stocks[p.id] || 0) : 0;
         return [Markup.button.callback(`🔹 ${p.name} - ${p.price.toLocaleString()}đ (Còn: ${stock})`, stock > 0 ? `view_${p.id}` : 'out_of_stock')];
     });
     buttons.push([Markup.button.callback('🔄 Cập nhật kho', 'refresh')]);
-    
+
     const menuText = `🛒 <b>SHOP MENU</b>`;
     try {
         if (ctx.callbackQuery) await ctx.editMessageText(menuText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
         else await ctx.replyWithHTML(menuText, Markup.inlineKeyboard(buttons));
     } catch (e) {
-        if(ctx.callbackQuery) ctx.answerCbQuery();
+        if (ctx.callbackQuery) ctx.answerCbQuery();
     }
 }
 
 bot.start(async (ctx) => {
-    await ctx.reply('👋 Chào mừng bạn quay lại!', 
+    await ctx.reply('👋 Chào mừng bạn quay lại!',
         Markup.keyboard([
             ['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA'],
             ['🎥 Hướng Dẫn Đăng Nhập ChatGPT Sử Dụng 2FA'] // <--- Thêm nút này vào hàng mới
         ])
-        .resize()
+            .resize()
     );
     // await showMainMenu(ctx); // (Dòng này tùy bạn có muốn hiện menu shop luôn không)
 });
@@ -372,22 +372,22 @@ bot.action(/view_(.+)/, async (ctx) => {
     const pid = ctx.match[1];
     const p = cachedProducts.find(x => x.id === pid);
     if (!p) return ctx.reply('❌ Lỗi SP');
-    
+
     const allStocks = await getStockCounts(cachedProducts);
     const currentStock = allStocks[p.id] || 0;
-    
+
     if (currentStock === 0) return ctx.editMessageText('❌ Hết hàng.');
 
-    const quantities = [1, 2, 5, 10]; 
+    const quantities = [1, 2, 5, 10];
     const buttons = [];
     const row = [];
     for (let q of quantities) { if (q <= currentStock) row.push(Markup.button.callback(`${q}`, `buy_${q}_${pid}`)); }
     if (row.length > 0) buttons.push(row);
-    
+
     buttons.push([Markup.button.callback('✎ Nhập số lượng khác', `ask_qty_${pid}`)]);
     buttons.push([Markup.button.callback('🔙 Quay lại', 'refresh')]);
 
-    await ctx.editMessageText(`📦 <b>${p.name}</b>\n💰 Giá: ${p.price.toLocaleString()}đ\n📊 Còn: <b>${currentStock}</b>`, 
+    await ctx.editMessageText(`📦 <b>${p.name}</b>\n💰 Giá: ${p.price.toLocaleString()}đ\n📊 Còn: <b>${currentStock}</b>`,
         { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
     );
 });
@@ -409,7 +409,7 @@ bot.action('skip_save_phone', async (ctx) => {
     const userId = ctx.from.id;
     if (userInputState.has(userId)) {
         userInputState.delete(userId); // Xóa trạng thái chờ
-        
+
         // [CẬP NHẬT] Thêm nút "Tiếp tục mua hàng" (callback là 'refresh' để gọi lại menu)
         await ctx.editMessageText(
             '✅ Đã bỏ qua bước lưu số điện thoại. Bạn có thể tiếp tục mua sắm!',
@@ -430,8 +430,8 @@ bot.action('skip_save_phone', async (ctx) => {
 // [THÊM MỚI] Bắt sự kiện khi khách bấm nút "Menu Mua Hàng" ở góc dưới
 bot.hears('🛒 Mở Menu Mua Hàng', async (ctx) => {
     // Xóa các trạng thái nhập liệu cũ (nếu có) để tránh bị kẹt
-    userInputState.delete(ctx.from.id); 
-    
+    userInputState.delete(ctx.from.id);
+
     // Hiện lại menu
     await showMainMenu(ctx);
 });
@@ -439,7 +439,7 @@ bot.hears('🛒 Mở Menu Mua Hàng', async (ctx) => {
 bot.hears('🔐 Lấy mã 2FA', async (ctx) => {
     // 1. Đặt trạng thái chờ nhập Key
     userInputState.set(ctx.from.id, { action: 'CONVERT_2FA' });
-    
+
     // 2. Hướng dẫn người dùng
     await ctx.reply(
         '🔐 <b>CHUYỂN ĐỔI MÃ 2FA</b>\n\n' +
@@ -452,7 +452,7 @@ bot.hears('🔐 Lấy mã 2FA', async (ctx) => {
 // --- XỬ LÝ NÚT GỬI VIDEO ---
 bot.hears('🎥 Hướng Dẫn Đăng Nhập ChatGPT Sử Dụng 2FA', async (ctx) => {
     // Thay 'MA_FILE_ID_CUA_BAN' bằng mã bạn vừa lấy ở Bước 1
-    const videoFileId = 'BAACAgUAAxkBAAICV2l2Vat8NvBFLRVvhm1PkXy0a_ZNAAJaHAACG22wV20JJqYBBadxOAQ'; 
+    const videoFileId = 'BAACAgUAAxkBAAICV2l2Vat8NvBFLRVvhm1PkXy0a_ZNAAJaHAACG22wV20JJqYBBadxOAQ';
 
     await ctx.replyWithVideo(videoFileId, {
         caption: '🎬 Đây là video hướng dẫn đăng nhập ChatGPT bằng mã 2FA!', // Chú thích dưới video
@@ -462,7 +462,7 @@ bot.hears('🎥 Hướng Dẫn Đăng Nhập ChatGPT Sử Dụng 2FA', async (ct
 
 bot.action(/cancel_(.+)/, async (ctx) => {
     const code = parseInt(ctx.match[1]);
-    if(pendingOrders.has(code)) {
+    if (pendingOrders.has(code)) {
         const order = pendingOrders.get(code);
         clearTimeout(order.timer);
         await releaseStock(order.tempOrderId);
@@ -495,7 +495,7 @@ bot.command('fix', async (ctx) => {
                 }
                 if (!isActive) {
                     row.assign({ status: 'available' });
-                    updates.push(row.save()); 
+                    updates.push(row.save());
                     count++;
                 }
             }
@@ -516,7 +516,7 @@ bot.command('fix', async (ctx) => {
 bot.command('check_id', (ctx) => {
     const myId = ctx.from.id;
     const adminList = CONFIG.ADMIN_ID;
-    
+
     // Kiểm tra xem ID của mình có nằm trong danh sách Admin không
     const isAdmin = adminList.includes(myId);
 
@@ -524,9 +524,81 @@ bot.command('check_id', (ctx) => {
         `🕵️ <b>KIỂM TRA QUYỀN ADMIN</b>\n\n` +
         `🆔 ID của bạn: <code>${myId}</code>\n` +
         `📋 Danh sách Admin Bot đang nhận: <code>${JSON.stringify(adminList)}</code>\n\n` +
-        `Kết quả: ${isAdmin ? '✅ BẠN LÀ ADMIN' : '❌ BẠN KHÔNG PHẢI ADMIN'}`, 
+        `Kết quả: ${isAdmin ? '✅ BẠN LÀ ADMIN' : '❌ BẠN KHÔNG PHẢI ADMIN'}`,
         { parse_mode: 'HTML' }
     );
+});
+
+// --- [THÊM MỚI] LỆNH THỐNG KÊ DOANH THU THEO MẶT HÀNG ---
+// Cách dùng: /thongke
+bot.command('thongke', async (ctx) => {
+    // Chỉ Admin mới được dùng
+    if (!CONFIG.ADMIN_ID.includes(ctx.from.id)) return ctx.reply('⛔ Bạn không có quyền Admin.');
+
+    const msg = await ctx.reply('⏳ Đang tải dữ liệu thống kê...');
+
+    try {
+        await doc.loadInfo();
+        const sheet = doc.sheetsByTitle['History'];
+
+        if (!sheet) {
+            return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '❌ Không tìm thấy sheet History.');
+        }
+
+        const rows = await sheet.getRows();
+
+        if (rows.length === 0) {
+            return ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, '📊 Chưa có đơn hàng nào được ghi nhận.');
+        }
+
+        // Thống kê theo từng mặt hàng
+        const stats = {};
+        let totalRevenue = 0;
+        let totalSold = 0;
+
+        for (const row of rows) {
+            const productName = row.get('product_name');
+            const price = parseInt(row.get('price')) || 0;
+
+            if (!productName) continue;
+
+            if (!stats[productName]) {
+                stats[productName] = {
+                    quantity: 0,
+                    revenue: 0
+                };
+            }
+
+            stats[productName].quantity++;
+            stats[productName].revenue += price;
+            totalRevenue += price;
+            totalSold++;
+        }
+
+        // Tạo tin nhắn kết quả
+        let message = `📊 <b>THỐNG KÊ DOANH THU</b>\n`;
+        message += `━━━━━━━━━━━━━━━━━━\n\n`;
+
+        // Sắp xếp theo doanh thu giảm dần
+        const sortedProducts = Object.entries(stats).sort((a, b) => b[1].revenue - a[1].revenue);
+
+        for (const [productName, data] of sortedProducts) {
+            message += `🔹 <b>${productName}</b>\n`;
+            message += `   📦 Đã bán: <code>${data.quantity}</code> tài khoản\n`;
+            message += `   💰 Doanh thu: <code>${data.revenue.toLocaleString('vi-VN')}đ</code>\n\n`;
+        }
+
+        message += `━━━━━━━━━━━━━━━━━━\n`;
+        message += `📈 <b>TỔNG KẾT:</b>\n`;
+        message += `   📦 Tổng đã bán: <code>${totalSold}</code> tài khoản\n`;
+        message += `   💵 Tổng doanh thu: <code>${totalRevenue.toLocaleString('vi-VN')}đ</code>`;
+
+        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, message, { parse_mode: 'HTML' });
+
+    } catch (e) {
+        console.error('Lỗi thống kê:', e);
+        ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Lỗi: ${e.message}`);
+    }
 });
 
 // --- [THÊM MỚI] LỆNH GỬI THÔNG BÁO CHO TOÀN BỘ KHÁCH HÀNG ---
@@ -540,7 +612,7 @@ bot.command('gui_tb', async (ctx) => {
     if (!content) return ctx.reply('⚠️ Vui lòng nhập nội dung.\nVí dụ: /gui_tb Hàng mới về anh em ơi!');
 
     const msg = await ctx.reply(`⏳ Đang gửi tin cho ${cachedUserIds.size} người...`);
-    
+
     let countSuccess = 0;
     let countBlock = 0;
 
@@ -549,9 +621,9 @@ bot.command('gui_tb', async (ctx) => {
         try {
             await bot.telegram.sendMessage(userId, `📢 <b>THÔNG BÁO TỪ SHOP</b>\n\n${content}`, { parse_mode: 'HTML' });
             countSuccess++;
-            
+
             // Nghỉ 50ms giữa các tin để tránh bị Telegram chặn spam
-            await new Promise(resolve => setTimeout(resolve, 50)); 
+            await new Promise(resolve => setTimeout(resolve, 50));
         } catch (e) {
             // Nếu khách đã chặn bot (Block) thì bỏ qua
             countBlock++;
@@ -573,7 +645,7 @@ bot.on('text', async (ctx) => {
 
     // Nếu user không có trong danh sách đợi (không đang mua, không đang chờ nhập SĐT) thì bỏ qua
     if (!userInputState.has(userId)) return;
-    
+
     const state = userInputState.get(userId);
 
     // ================= [THÊM MỚI] XỬ LÝ 2FA (UPDATE REALTIME) =================
@@ -583,12 +655,12 @@ bot.on('text', async (ctx) => {
             if (state.interval2FA) clearInterval(state.interval2FA); // Nhớ giữ dòng tắt bộ đếm này nếu có
             userInputState.delete(userId);
 
-            return ctx.reply('✅ Đã thoát chế độ 2FA.', 
+            return ctx.reply('✅ Đã thoát chế độ 2FA.',
                 Markup.keyboard([
                     ['🛒 Mở Menu Mua Hàng', '🔐 Lấy mã 2FA'],
                     ['🎥 Hướng Dẫn Đăng Nhập ChatGPT Sử Dụng 2FA'] // <--- THÊM DÒNG NÀY VÀO
                 ])
-                .resize()
+                    .resize()
             );
         }
 
@@ -596,40 +668,40 @@ bot.on('text', async (ctx) => {
             // 2. Làm sạch key và kiểm tra
             const secret = text.replace(/\s/g, '').toUpperCase();
             if (!secret) throw new Error("Key rỗng");
-            
+
             // Test thử xem key có hợp lệ không trước khi chạy loop
-            authenticator.generate(secret); 
+            authenticator.generate(secret);
 
             // 3. Nếu user gửi key mới, tắt vòng lặp cũ đi (nếu có)
             if (state.interval2FA) clearInterval(state.interval2FA);
 
             // 4. Gửi tin nhắn GỐC trước
             const msg = await ctx.reply('⏳ Đang khởi tạo bộ đếm 2FA...', { parse_mode: 'HTML' });
-            
+
             // 5. Hàm cập nhật tin nhắn (Chạy mỗi giây)
             const updateMessage = async () => {
                 try {
                     const token = authenticator.generate(secret);
                     const seconds = 30;
                     const remaining = seconds - (Math.floor(Date.now() / 1000) % seconds);
-                    
+
                     // Tạo thanh loading visual (cho đẹp)
                     // const bar = '▓'.repeat(remaining) + '░'.repeat(30 - remaining); 
 
-                    const messageContent = 
+                    const messageContent =
                         `🔐 <b>MÃ 2FA LIVE</b>\n` +
                         `Key: <code>${secret}</code>\n\n` +
                         `Code: <code>${token}</code>\n` +
-                        `⏳ Đổi sau: <b>${remaining}s</b>\n` + 
+                        `⏳ Đổi sau: <b>${remaining}s</b>\n` +
                         `------------------\n` +
                         `👇 Gửi key khác hoặc gõ "hủy" để dừng.`;
 
                     // Chỉ sửa tin nhắn nếu nội dung thay đổi (để tiết kiệm API)
                     await ctx.telegram.editMessageText(
-                        ctx.chat.id, 
-                        msg.message_id, 
-                        null, 
-                        messageContent, 
+                        ctx.chat.id,
+                        msg.message_id,
+                        null,
+                        messageContent,
                         { parse_mode: 'HTML' }
                     );
                 } catch (err) {
@@ -644,32 +716,32 @@ bot.on('text', async (ctx) => {
             // 6. Cài đặt vòng lặp: Cập nhật mỗi 2 giây (Để tránh bị Telegram chặn vì spam request)
             // Lưu interval vào state để lát nữa còn tắt được
             const intervalId = setInterval(updateMessage, 2000);
-            
+
             // Cập nhật state với ID của vòng lặp
             state.secret = secret; // Lưu key
             state.interval2FA = intervalId; // Lưu ID vòng lặp
-            
+
             // Tự động tắt sau 2 phút để tiết kiệm tài nguyên server (tránh chạy vĩnh viễn)
             setTimeout(() => {
                 clearInterval(intervalId);
-            }, 120000); 
+            }, 120000);
 
         } catch (e) {
             console.error("Lỗi 2FA:", e);
             ctx.reply('❌ Mã Key không hợp lệ! Vui lòng kiểm tra lại.');
         }
-        return; 
+        return;
     }
     // ================= KẾT THÚC ĐOẠN 2FA =================
 
     // --- TRƯỜNG HỢP 1: ĐANG CHỜ NHẬP SỐ ĐIỆN THOẠI (BẢO HÀNH) ---
     if (state.action === 'wf_phone') {
-        
+
         // 1. Cho phép thoát bằng lệnh hoặc từ khóa
         if (text.startsWith('/') || ['hủy', 'huy', 'bỏ qua', 'bo qua', 'skip'].includes(text.toLowerCase())) {
-            if (state.timer) clearTimeout(state.timer); 
+            if (state.timer) clearTimeout(state.timer);
             userInputState.delete(userId);
-            
+
             // [CẬP NHẬT] Trả lời kèm nút bấm
             return ctx.reply(
                 '✅ Đã hủy bước nhập số điện thoại.',
@@ -686,18 +758,18 @@ bot.on('text', async (ctx) => {
 
         // 3. Tiến hành lưu vào Google Sheet
         const msg = await ctx.reply('⏳ Đang lưu thông tin...');
-        
+
         // Gọi hàm updatePhoneHistory (bạn nhớ phải thêm hàm này vào file rồi nhé)
         const success = await updatePhoneHistory(state.orderId, text);
-        
+
         if (success) {
-            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, 
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null,
                 `✅ <b>Đã lưu số điện thoại: ${text}</b>\nCảm ơn bạn! Bảo hành cho đơn hàng đã được kích hoạt.`,
                 { parse_mode: 'HTML' }
             );
-            
+
             // [QUAN TRỌNG] Hủy hẹn giờ timeout vì họ đã nhập xong rồi
-            if (state.timer) clearTimeout(state.timer); 
+            if (state.timer) clearTimeout(state.timer);
 
             // Xóa trạng thái để user chat bình thường
             userInputState.delete(userId);
@@ -712,7 +784,7 @@ bot.on('text', async (ctx) => {
     if (state.pid) {
         const qty = parseInt(text);
         if (isNaN(qty) || qty <= 0) return ctx.reply('❌ Số lượng không hợp lệ. Vui lòng nhập số lớn hơn 0.');
-        
+
         userInputState.delete(userId); // Xóa trạng thái mua hàng
         await handleBuyRequest(ctx, state.pid, qty);
     }
@@ -722,59 +794,59 @@ bot.on('text', async (ctx) => {
 app.post('/webhook', async (req, res) => {
     try {
         const webhookData = payos.verifyPaymentWebhookData(req.body);
-        const dataObj = webhookData.data || webhookData; 
-        const orderCode = dataObj.orderCode; 
+        const dataObj = webhookData.data || webhookData;
+        const orderCode = dataObj.orderCode;
         const amount = dataObj.amount;
 
         if (webhookData.code === "00" && pendingOrders.has(orderCode)) {
             const order = pendingOrders.get(orderCode);
-            
+
             if (amount >= order.total) {
                 clearTimeout(order.timer);
 
                 // Truyền orderCode (mã PayOS) vào để làm đuôi cho mã ORD_BOT_
                 const result = await finalizeStock(
-                    order.tempOrderId, 
-                    { id: order.userId, username: order.username }, 
+                    order.tempOrderId,
+                    { id: order.userId, username: order.username },
                     order.pName,
                     orderCode,
                     order.price
                 );
 
                 if (result.success) {
-                    const accStr = result.accounts.map((a, i) => `${i+1}. ${a}`).join('\n');
-                    
+                    const accStr = result.accounts.map((a, i) => `${i + 1}. ${a}`).join('\n');
+
                     // [LOGIC MỚI] Kiểm tra xem có 2FA không để tạo tiêu đề
                     // Nếu dòng acc có nhiều hơn 2 phần tử cách nhau bởi dấu "|" thì tức là có 2FA
                     // (VD: "User | Pass" -> length là 2. "User | Pass | 2FA" -> length là 3)
                     const has2FA = result.accounts.length > 0 && result.accounts[0].split('|').length > 2;
-                    
+
                     // Tạo dòng tiêu đề tương ứng
                     const headerTitle = has2FA ? "Username | Password | 2FA" : "Username | Password";
 
                     // 1. Gửi thông tin tài khoản (Acc) cho khách KÈM TIÊU ĐỀ
-                    await bot.telegram.sendMessage(order.userId, 
+                    await bot.telegram.sendMessage(order.userId,
                         `✅ <b>THANH TOÁN THÀNH CÔNG!</b>\n` +
                         `Mã đơn: <b>${result.finalOrderId}</b>\n` +
                         `📦 <b>Tài khoản của bạn:</b>\n` +
                         `<code>${headerTitle}</code>\n` + // <--- Dòng tiêu đề thêm vào ở đây
-                        `<pre>${accStr}</pre>`, 
+                        `<pre>${accStr}</pre>`,
                         { parse_mode: 'HTML' }
                     );
 
                     // 2. Gửi yêu cầu nhập SĐT + Nút "Bỏ qua"
-                    await bot.telegram.sendMessage(order.userId, 
+                    await bot.telegram.sendMessage(order.userId,
                         `🛡 <b>KÍCH HOẠT BẢO HÀNH</b>\n\n` +
                         `Vui lòng nhập <b>SỐ ĐIỆN THOẠI</b> để hệ thống lưu bảo hành.\n` +
                         `Hoặc bấm nút bên dưới nếu bạn không muốn lưu.`,
-                        { 
+                        {
                             parse_mode: 'HTML',
                             ...Markup.inlineKeyboard([
                                 [Markup.button.callback('❌ Bỏ qua (Không lưu)', 'skip_save_phone')]
                             ])
                         }
                     );
-                    
+
                     // 3. Tạo bộ đếm: Sau 10 phút nếu không nhập thì tự hủy trạng thái chờ
                     const timeoutJob = setTimeout(async () => {
                         // Kiểm tra xem sau 10p user có còn đang ở trạng thái chờ không
@@ -783,26 +855,26 @@ app.post('/webhook', async (req, res) => {
                             if (currentState.action === 'wf_phone') {
                                 userInputState.delete(order.userId);
                                 try {
-                                    await bot.telegram.sendMessage(order.userId, 
+                                    await bot.telegram.sendMessage(order.userId,
                                         '⏳ Đã hết thời gian chờ nhập SĐT bảo hành. Bạn có thể liên hệ Admin nếu cần bổ sung sau.'
                                     );
-                                } catch (e) {}
+                                } catch (e) { }
                             }
                         }
                     }, 10 * 60 * 1000); // 10 phút
 
                     // 4. Lưu trạng thái chờ nhập SĐT + kèm theo cái hẹn giờ (timer)
-                    userInputState.set(order.userId, { 
-                        action: 'wf_phone', 
+                    userInputState.set(order.userId, {
+                        action: 'wf_phone',
                         orderId: result.finalOrderId,
-                        timer: timeoutJob 
+                        timer: timeoutJob
                     });
-                    
+
                     // 5. Báo Admin có đơn mới
                     CONFIG.ADMIN_ID.forEach(id => {
-                        bot.telegram.sendMessage(id, `💰 Đơn mới: ${result.finalOrderId} (${order.total.toLocaleString()}đ)`).catch(()=>{});
+                        bot.telegram.sendMessage(id, `💰 Đơn mới: ${result.finalOrderId} (${order.total.toLocaleString()}đ)`).catch(() => { });
                     });
-                    
+
                     // 6. Xóa đơn hàng khỏi danh sách chờ thanh toán
                     pendingOrders.delete(orderCode);
                 }
